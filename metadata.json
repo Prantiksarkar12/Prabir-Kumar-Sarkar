@@ -1,0 +1,6 @@
+{
+  "name": "Pulse - Real-Time Communication Platform",
+  "description": "Production-grade real-time messaging platform powered by PostgreSQL persistence, WebSocket real-time events, audio notes, role-based moderation, and administrative oversight.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

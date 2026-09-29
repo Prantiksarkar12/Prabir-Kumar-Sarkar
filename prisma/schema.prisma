@@ -1,0 +1,324 @@
+// Prisma Schema for Pulse Real-Time Chat Platform
+// Source of truth for PostgreSQL database migrations and client generation
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum MemberRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  AUDIO
+  VOICE
+  SYSTEM
+}
+
+enum ReportStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  DISMISSED
+}
+
+enum PrivacyOption {
+  EVERYONE
+  CONTACTS
+  NOBODY
+}
+
+model User {
+  id            String    @id @default(uuid())
+  username      String    @unique
+  display_name  String
+  email         String    @unique
+  password_hash String
+  avatar_url    String?
+  bio           String?   @default("")
+  role          UserRole  @default(USER)
+  is_banned     Boolean   @default(false)
+  ban_reason    String?
+  last_seen_at  DateTime  @default(now())
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @updatedAt
+
+  // Relations
+  privacy_settings      UserPrivacySettings?
+  sessions              Session[]
+  conversation_members  ConversationMember[]
+  sent_messages         Message[]
+  message_reactions     MessageReaction[]
+  message_reads         MessageRead[]
+  blocked_users         Block[]               @relation("BlockerRelation")
+  blocked_by            Block[]               @relation("BlockedRelation")
+  reports_filed         Report[]              @relation("ReporterRelation")
+  reports_received      Report[]              @relation("ReportedUserRelation")
+  reviewed_reports      Report[]              @relation("ReviewedByRelation")
+  notifications         Notification[]
+  push_subscriptions    PushSubscription[]
+  admin_actions         AdminAction[]
+  audit_logs            AuditLog[]
+
+  @@map("users")
+}
+
+model Session {
+  id             String    @id @default(uuid())
+  user_id        String
+  token          String    @unique
+  device_info    String?
+  ip_address     String?
+  expires_at     DateTime
+  created_at     DateTime  @default(now())
+  last_active_at DateTime  @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([user_id])
+  @@map("sessions")
+}
+
+model UserPrivacySettings {
+  user_id                   String        @id
+  who_can_message           PrivacyOption @default(EVERYONE)
+  who_can_see_online        PrivacyOption @default(EVERYONE)
+  who_can_see_last_seen     PrivacyOption @default(EVERYONE)
+  who_can_add_to_groups     PrivacyOption @default(EVERYONE)
+  read_receipts_enabled     Boolean       @default(true)
+  push_notifications_enabled Boolean      @default(true)
+  created_at                DateTime      @default(now())
+  updated_at                DateTime      @updatedAt
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("user_privacy_settings")
+}
+
+model Conversation {
+  id          String           @id @default(uuid())
+  type        ConversationType @default(DIRECT)
+  title       String?
+  description String?
+  avatar_url  String?
+  created_by  String?
+  created_at  DateTime         @default(now())
+  updated_at  DateTime         @updatedAt
+
+  members  ConversationMember[]
+  messages Message[]
+  reports  Report[]
+
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id                   String     @id @default(uuid())
+  conversation_id      String
+  user_id              String
+  role                 MemberRole @default(MEMBER)
+  is_muted             Boolean    @default(false)
+  is_pinned            Boolean    @default(false)
+  is_archived          Boolean    @default(false)
+  last_read_message_id String?
+  last_read_at         DateTime?
+  joined_at            DateTime   @default(now())
+
+  conversation Conversation @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([conversation_id, user_id])
+  @@index([user_id])
+  @@map("conversation_members")
+}
+
+model Message {
+  id                  String      @id @default(uuid())
+  conversation_id     String
+  sender_id           String
+  content             String
+  message_type        MessageType @default(TEXT)
+  reply_to_message_id String?
+  client_message_id   String?
+  is_pinned           Boolean     @default(false)
+  created_at          DateTime    @default(now())
+  updated_at          DateTime    @updatedAt
+  edited_at           DateTime?
+  deleted_at          DateTime?
+  deleted_by          String?
+
+  conversation Conversation        @relation(fields: [conversation_id], references: [id], onDelete: Cascade)
+  sender       User                @relation(fields: [sender_id], references: [id], onDelete: Cascade)
+  reply_to     Message?            @relation("ReplyRelation", fields: [reply_to_message_id], references: [id], onDelete: SetNull)
+  replies      Message[]           @relation("ReplyRelation")
+  attachments  MessageAttachment[]
+  reactions    MessageReaction[]
+  reads        MessageRead[]
+  reports      Report[]
+
+  @@index([conversation_id, created_at])
+  @@index([sender_id])
+  @@map("messages")
+}
+
+model MessageAttachment {
+  id               String   @id @default(uuid())
+  message_id       String
+  file_name        String
+  file_url         String
+  file_size        Int
+  mime_type        String
+  duration_seconds Float?
+  created_at       DateTime @default(now())
+
+  message Message @relation(fields: [message_id], references: [id], onDelete: Cascade)
+
+  @@map("message_attachments")
+}
+
+model MessageReaction {
+  id         String   @id @default(uuid())
+  message_id String
+  user_id    String
+  reaction   String
+  created_at DateTime @default(now())
+
+  message Message @relation(fields: [message_id], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([message_id, user_id, reaction])
+  @@map("message_reactions")
+}
+
+model MessageRead {
+  id         String   @id @default(uuid())
+  message_id String
+  user_id    String
+  read_at    DateTime @default(now())
+
+  message Message @relation(fields: [message_id], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@unique([message_id, user_id])
+  @@map("message_reads")
+}
+
+model Block {
+  id         String   @id @default(uuid())
+  blocker_id String
+  blocked_id String
+  created_at DateTime @default(now())
+
+  blocker User @relation("BlockerRelation", fields: [blocker_id], references: [id], onDelete: Cascade)
+  blocked User @relation("BlockedRelation", fields: [blocked_id], references: [id], onDelete: Cascade)
+
+  @@unique([blocker_id, blocked_id])
+  @@index([blocker_id])
+  @@index([blocked_id])
+  @@map("blocks")
+}
+
+model Report {
+  id               String       @id @default(uuid())
+  reporter_id      String
+  reported_user_id String?
+  message_id       String?
+  conversation_id  String?
+  reason           String
+  description      String?
+  status           ReportStatus @default(OPEN)
+  resolution_notes String?
+  reviewed_by      String?
+  reviewed_at      DateTime?
+  created_at       DateTime     @default(now())
+
+  reporter      User          @relation("ReporterRelation", fields: [reporter_id], references: [id], onDelete: Cascade)
+  reported_user User?         @relation("ReportedUserRelation", fields: [reported_user_id], references: [id], onDelete: SetNull)
+  reviewed_user User?         @relation("ReviewedByRelation", fields: [reviewed_by], references: [id], onDelete: SetNull)
+  message       Message?      @relation(fields: [message_id], references: [id], onDelete: SetNull)
+  conversation  Conversation? @relation(fields: [conversation_id], references: [id], onDelete: SetNull)
+
+  @@map("reports")
+}
+
+model Notification {
+  id         String   @id @default(uuid())
+  user_id    String
+  type       String
+  title      String
+  body       String
+  data       Json?
+  is_read    Boolean  @default(false)
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id, created_at])
+  @@map("notifications")
+}
+
+model PushSubscription {
+  id         String   @id @default(uuid())
+  user_id    String
+  endpoint   String   @unique
+  keys_auth  String
+  keys_p256dh String
+  created_at DateTime @default(now())
+
+  user User @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("push_subscriptions")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  actor_id    String?
+  action      String
+  target_type String
+  target_id   String?
+  metadata    Json?
+  ip_address  String?
+  user_agent  String?
+  created_at  DateTime @default(now())
+
+  actor User? @relation(fields: [actor_id], references: [id], onDelete: SetNull)
+
+  @@index([created_at])
+  @@map("audit_logs")
+}
+
+model AdminAction {
+  id          String   @id @default(uuid())
+  admin_id    String
+  action_type String
+  target_id   String
+  reason      String?
+  created_at  DateTime @default(now())
+
+  admin User @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+
+  @@map("admin_actions")
+}
